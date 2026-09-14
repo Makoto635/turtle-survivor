@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>カメサバイバー (Turtle Survivors)</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: manipulation;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #222;
+            font-family: sans-serif;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        canvas {
+            display: block;
+            background-color: #2e7d32;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: white;
+            font-weight: bold;
+            font-size: 18px;
+            text-shadow: 2px 2px 4px #000;
+            pointer-events: none;
+        }
+
+        #hp-bar-container {
+            width: 150px;
+            height: 20px;
+            background-color: #555;
+            border: 2px solid #fff;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        #hp-bar {
+            width: 100%;
+            height: 100%;
+            background-color: #4caf50;
+            transition: width 0.1s;
+        }
+
+        #joystick-zone {
+            position: absolute;
+            bottom: 30px;
+            left: 30px;
+            width: 120px;
+            height: 120px;
+        }
+
+        #joystick-base {
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            position: relative;
+        }
+
+        #joystick-stick {
+            width: 50px;
+            height: 50px;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
+            position: absolute;
+            top: 35px;
+            left: 35px;
+        }
+
+        #game-over-screen {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        #start-btn {
+            padding: 12px 24px;
+            font-size: 20px;
+            background-color: #4caf50;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <div id="ui-layer">
+            <div id="hp-bar-container">
+                <div id="hp-bar"></div>
+            </div>
+            <div id="score">SCORE: 0</div>
+            <div id="level">LV: 1</div>
+        </div>
+        <div id="joystick-zone">
+            <div id="joystick-base">
+                <div id="joystick-stick"></div>
+            </div>
+        </div>
+        <div id="game-over-screen">
+            <h1 id="screen-title">カメサバイバー</h1>
+            <p id="final-score"></p>
+            <button id="start-btn">ゲームスタート</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener("resize", resizeCanvas);
+        resizeCanvas();
+
+        let gameActive = false;
+        let score = 0;
+        let level = 1;
+        let exp = 0;
+        let nextLevelExp = 10;
+        let frameCount = 0;
+
+        const keys = {};
+        let inputVector = { x: 0, y: 0 };
+
+        window.addEventListener("keydown", (e) => keys[e.key] = true);
+        window.addEventListener("keyup", (e) => keys[e.key] = false);
+
+        const player = {
+            x: 0, y: 0,
+            radius: 20,
+            speed: 3.5,
+            hp: 100,
+            maxHp: 100,
+            attackCooldown: 0,
+            attackSpeed: 30,
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = "#2e7d32";
+                ctx.fill();
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = "#1b5e20";
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.arc(0, -this.radius + 2, 8, 0, Math.PI * 2);
+                ctx.fillStyle = "#81c784";
+                ctx.fill();
+
+                ctx.fillStyle = "#000";
+                ctx.beginPath();
+                ctx.arc(-3, -this.radius, 2, 0, Math.PI * 2);
+                ctx.arc(3, -this.radius, 2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        };
+
+        let enemies = [];
+        let bullets = [];
+        let expGems = [];
+
+        class Enemy {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.radius = 15;
+                this.speed = 1.5 + Math.random() * 0.5;
+                this.hp = 2 + Math.floor(level * 0.5);
+            }
+            update() {
+                const dx = player.x - this.x;
+                const dy = player.y - this.y;
+                const dist = Math.hypot(dx, dy);
+                this.x += (dx / dist) * this.speed;
+                this.y += (dy / dist) * this.speed;
+            }
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = "#e53935";
+                ctx.fill();
+            }
+        }
+
+        class Bullet {
+            constructor(x, y, vx, vy) {
+                this.x = x;
+                this.y = y;
+                this.vx = vx;
+                this.vy = vy;
+                this.radius = 6;
+                this.life = 100;
+            }
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life--;
+            }
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = "#29b6f6";
+                ctx.fill();
+            }
+        }
+
+        class ExpGem {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.radius = 5;
+            }
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = "#ffd54f";
+                ctx.fill();
+            }
+        }
+
+        function init() {
+            player.x = canvas.width / 2;
+            player.y = canvas.height / 2;
+            player.hp = 100;
+            score = 0;
+            level = 1;
+            exp = 0;
+            nextLevelExp = 10;
+            enemies = [];
+            bullets = [];
+            expGems = [];
+            gameActive = true;
+            document.getElementById("game-over-screen").classList.add("hidden");
+            updateUI();
+        }
+
+        function spawnEnemy() {
+            if (enemies.length > 100) return;
+            let x, y;
+            if (Math.random() < 0.5) {
+                x = Math.random() < 0.5 ? -20 : canvas.width + 20;
+                y = Math.random() * canvas.height;
+            } else {
+                x = Math.random() * canvas.width;
+                y = Math.random() < 0.5 ? -20 : canvas.height + 20;
+            }
+            enemies.push(new Enemy(x, y));
+        }
+
+        function autoAttack() {
+            if (enemies.length === 0) return;
+            let nearest = enemies[0];
+            let minDist = Math.hypot(enemies[0].x - player.x, enemies[0].y - player.y);
+            for (let i = 1; i < enemies.length; i++) {
+                let d = Math.hypot(enemies[i].x - player.x, enemies[i].y - player.y);
+                if (d < minDist) {
+                    minDist = d;
+                    nearest = enemies[i];
+                }
+            }
+            const angle = Math.atan2(nearest.y - player.y, nearest.x - player.x);
+            const speed = 8;
+            bullets.push(new Bullet(player.x, player.y, Math.cos(angle) * speed, Math.sin(angle) * speed));
+        }
+
+        function gameLoop() {
+            if (!gameActive) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            frameCount++;
+
+            inputVector.x = 0;
+            inputVector.y = 0;
+            if (keys["ArrowUp"] || keys["w"]) inputVector.y -= 1;
+            if (keys["ArrowDown"] || keys["s"]) inputVector.y += 1;
+            if (keys["ArrowLeft"] || keys["a"]) inputVector.x -= 1;
+            if (keys["ArrowRight"] || keys["d"]) inputVector.x += 1;
+
+            const len = Math.hypot(inputVector.x, inputVector.y);
+            if (len > 0) {
+                player.x += (inputVector.x / len) * player.speed;
+                player.y += (inputVector.y / len) * player.speed;
+            }
+
+            player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
+            player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
+
+            player.draw();
+
+            player.attackCooldown++;
+            if (player.attackCooldown >= player.attackSpeed) {
+                autoAttack();
+                player.attackCooldown = 0;
+            }
+
+            if (frameCount % Math.max(10, 60 - level * 2) === 0) {
+                spawnEnemy();
+            }
+
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const b = bullets[i];
+                b.update();
+                b.draw();
+                if (b.life <= 0) {
+                    bullets.splice(i, 1);
+                    continue;
+                }
+                for (let j = enemies.length - 1; j >= 0; j--) {
+                    const e = enemies[j];
+                    if (Math.hypot(b.x - e.x, b.y - e.y) < b.radius + e.radius) {
+                        e.hp--;
+                        bullets.splice(i, 1);
+                        if (e.hp <= 0) {
+                            expGems.push(new ExpGem(e.x, e.y));
+                            enemies.splice(j, 1);
+                            score += 10;
+                        }
+                        break;
+                    }
+                }
+            }
+
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const e = enemies[i];
+                e.update();
+                e.draw();
+                if (Math.hypot(player.x - e.x, player.y - e.y) < player.radius + e.radius) {
+                    player.hp -= 0.5;
+                    updateUI();
+                    if (player.hp <= 0) gameOver();
+                }
+            }
+
+            for (let i = expGems.length - 1; i >= 0; i--) {
+                const gem = expGems[i];
+                gem.draw();
+                const dist = Math.hypot(player.x - gem.x, player.y - gem.y);
+                if (dist < player.radius + 30) {
+                    gem.x += (player.x - gem.x) * 0.1;
+                    gem.y += (player.y - gem.y) * 0.1;
+                }
+                if (dist < player.radius + gem.radius) {
+                    expGems.splice(i, 1);
+                    exp++;
+                    if (exp >= nextLevelExp) levelUp();
+                    updateUI();
+                }
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        function levelUp() {
+            level++;
+            exp = 0;
+            nextLevelExp = Math.floor(nextLevelExp * 1.5);
+            player.maxHp += 10;
+            player.hp = player.maxHp;
+            if (player.attackSpeed > 10) player.attackSpeed -= 2;
+        }
+
+        function updateUI() {
+            document.getElementById("hp-bar").style.width = `${Math.max(0, (player.hp / player.maxHp) * 100)}%`;
+            document.getElementById("score").innerText = `SCORE: ${score}`;
+            document.getElementById("level").innerText = `LV: ${level}`;
+        }
+
+        function gameOver() {
+            gameActive = false;
+            document.getElementById("screen-title").innerText = "GAME OVER";
+            document.getElementById("final-score").innerText = `SCORE: ${score} (LV.${level})`;
+            document.getElementById("game-over-screen").classList.remove("hidden");
+        }
+
+        const joystickZone = document.getElementById("joystick-zone");
+        const joystickStick = document.getElementById("joystick-stick");
+        let touchId = null;
+
+        joystickZone.addEventListener("touchstart", (e) => {
+            const touch = e.changedTouches[0];
+            touchId = touch.identifier;
+            updateJoystick(touch);
+        });
+
+        joystickZone.addEventListener("touchmove", (e) => {
+            for (let touch of e.changedTouches) {
+                if (touch.identifier === touchId) updateJoystick(touch);
+            }
+        });
+
+        const resetJoystick = () => {
+            touchId = null;
+            joystickStick.style.top = "35px";
+            joystickStick.style.left = "35px";
+            inputVector = { x: 0, y: 0 };
+        };
+
+        joystickZone.addEventListener("touchend", resetJoystick);
+        joystickZone.addEventListener("touchcancel", resetJoystick);
+
+        function updateJoystick(touch) {
+            const rect = joystickZone.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+            const dx = touch.clientX - centerX;
+            const dy = touch.clientY - centerY;
+            const dist = Math.hypot(dx, dy);
+            const maxDist = 40;
+            const angle = Math.atan2(dy, dx);
+            const moveDist = Math.min(dist, maxDist);
+
+            joystickStick.style.left = `${35 + Math.cos(angle) * moveDist}px`;
+            joystickStick.style.top = `${35 + Math.sin(angle) * moveDist}px`;
+
+            inputVector.x = Math.cos(angle);
+            inputVector.y = Math.sin(angle);
+        }
+
+        document.getElementById("start-btn").addEventListener("click", () => {
+            init();
+            requestAnimationFrame(gameLoop);
+        });
+    </script>
+</body>
+</html>
